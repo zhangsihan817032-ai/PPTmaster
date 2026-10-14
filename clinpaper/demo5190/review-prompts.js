@@ -1,4 +1,12 @@
-export const REVIEW_PROMPT_STORAGE_KEY = "clinpaper-review-prompt-templates-v1";
+export const REVIEW_PROMPT_STORAGE_KEY = "clinpaper-review-prompt-templates-v7";
+const LEGACY_REVIEW_PROMPT_STORAGE_KEYS = [
+  "clinpaper-review-prompt-templates-v6",
+  "clinpaper-review-prompt-templates-v5",
+  "clinpaper-review-prompt-templates-v4",
+  "clinpaper-review-prompt-templates-v3",
+  "clinpaper-review-prompt-templates-v2",
+  "clinpaper-review-prompt-templates-v1",
+];
 
 export const REVIEW_PROMPT_DEFINITIONS = {
   section: {
@@ -15,7 +23,7 @@ export const REVIEW_PROMPT_DEFINITIONS = {
     ],
   },
   merge: {
-    label: "整合全文",
+    label: "全文整合与配图",
     action: "review_merge_manuscript",
     variables: [
       "topic_json",
@@ -24,6 +32,7 @@ export const REVIEW_PROMPT_DEFINITIONS = {
       "confirmed_outline_json",
       "section_drafts_json",
       "literature_library_json",
+      "paragraph_index_json",
     ],
   },
   preflight: {
@@ -82,53 +91,108 @@ export const DEFAULT_REVIEW_PROMPTS = {
 【输出】
 只输出 draft_text 对应的 Markdown 正文及必要表格，不输出字段名、JSON、代码块、参考文献列表、分析过程或写作说明；不输出当前章节标题。`,
 
-  merge: `你是一名具有医学期刊综述写作经验的医学论文编辑。你的任务是基于已有章节正文及其中的表格，整合形成符合医学期刊写作规范的综述初稿，并保持原有观点、证据边界和引用关系一致。
+  merge: `你是一名为临床医生、医学生和医学科研人员提供投稿支持的医学期刊编辑，具备医学综述整合、证据边界判断、引用核对和图表规划能力。请基于已有章节正文及表格，完成综述初稿整合与配图规划。
 
-整合目标是编辑整合，而不是重新创作全文。仅使用已生成正文和输入文献中已有的信息，不根据医学常识或领域背景补充未出现的观点、数据、结论、机制解释或文献引用。
-
-【输入信息】
+【输入】
 确认题目：{{topic_json}}
 写作思路：{{writing_approach_json}}
 写作要求：{{writing_requirements_json}}
 完整确认版大纲：{{confirmed_outline_json}}
-已生成正文：{{section_drafts_json}}
+已生成正文（每个可定位段落前含 sourceParagraphId 内部锚点）：{{section_drafts_json}}
 正文文献：{{literature_library_json}}
+正文段落索引（仅含锚点、章节、序号和引用编号）：{{paragraph_index_json}}
 
-所有章节引用对应的文献已经完成全篇去重、统一排序和全局编号。正文、表格及正文文献中的 referenceNumber 使用同一套全局编号；整合阶段不得重新识别、去重、排序或重建编号关系。
+【执行步骤】
+1. 整合全文：按确认版大纲顺序组合章节，统一术语、缩写、标点、语言风格和衔接，删除空泛、机械或高度重复的表达，同时保留各章核心观点、限制性表达和证据边界。
+2. 处理表格：保留能提高横向比较或集中归纳效率的已有表格，校正为标准 Markdown 管道表格并按出现顺序连续编号；数据行少于3行、关键字段普遍缺失或与其他表格高度重复且无新增组织价值时，删除表格并保留正文。正文不逐项复述表格，且正文或表格中的独立事实、限定条件和引用均需保留。
+3. 生成完整初稿：依次包含题名、摘要、关键词、正文和有明确依据的投稿相关声明，不生成参考文献列表。摘要只概括正文已有内容；关键词覆盖核心疾病或人群、主题和关键概念；声明信息不足时写“待作者确认”。
+4. 规划配图：扫描整合后的正文和保留表格，最多规划3张可追溯的流程图或数据图；同一内容只选一种主要表达方式，没有合适内容时返回空数组。
+5. 输出前校验：核对文章结构、写作语言、引用标记、配图来源和 JSON 合法性，修正后再输出。
 
-【生成要求】
-- 全文严格使用写作要求指定的语言。
-- merged_manuscript 按顺序包含题名、摘要、关键词、正文和适用的投稿相关声明，不生成参考文献列表。
-- 正文严格按照确认版大纲顺序整合，保持章节层级、边界和核心内容，不自行调整整体结构。
-- 保留各章节核心观点、证据边界、限制性表达和引用标记，不扩大结论或提升证据强度。
-- 可以统一术语、缩写、语言风格、标点和学术表达，删除明显重复、空泛或机械衔接内容。
-- 可以优化已有内容间的逻辑衔接，但不得生成新的总结性观点、机制解释、研究判断或临床建议。
-- 不新增文献、引用标记、DOI、PMID、样本量、研究结果、统计数据或结论。
-- 非系统综述、范围综述或 Meta 分析时，不补充系统检索流程、PRISMA、纳入研究统计、正式质量评价或证据分级。
+【全文与证据边界】
+- “<!-- sourceParagraphId:... -->”是配图来源定位锚点，不是论文内容。它只用于为图形返回来源段落 ID，不得出现在 merged_manuscript 中，不得改写、合并或虚构新的 sourceParagraphId。
+- 全文使用【写作要求】指定的语言、篇幅和格式，围绕确认题目限定的人群、疾病或对象、干预或暴露、指标和核心关注点。
+- 仅使用【已生成正文】及其中表格已有的信息；【正文文献】只用于核对引用，不据此新增正文观点、数据、结论、机制解释或临床建议。
+- 保持确认版大纲的顺序、层级、章节边界和核心内容。可重组表达和优化衔接，但合并段落后仍保持原意、证据强度和适用范围。
+- 文章类型不是系统综述、范围综述或 Meta 分析时，不添加系统检索流程、PRISMA、纳入研究统计、正式质量评价或证据分级。
+- “未报告”保持为信息缺失，不解释为不存在、无效或没有作用。
 
-【引用编号硬约束】
-- 只能保留输入中原本存在的数字引用，如 [1]、[1, 2]、[1-3]。
-- 每个编号必须存在于正文文献的 referenceNumber 中并对应同一篇文献。
-- 不得新增、删除、替换、重新编号或改变编号组合、区间和顺序。
-- 删除重复内容时，必须在语义等价内容中保留其观点和引用关系。
-- 编号无法对应时保留原始内容并标记“[引用编号待核对]”。
+【引用约束】
+- 输入正文、表格和【正文文献】已使用同一套全局 referenceNumber。完整保留原引用标记及其顺序、组合、区间和观点绑定关系，如 [1]、[1, 2]、[1-3]。
+- 输出引用编号均须存在于【正文文献】。不根据作者、年份、题名、PMID、DOI、表格研究名称或待确认信息推导引用。
+- 去重时，将含引用的观点及其原引用一起保留在语义等价位置。编号或对应关系异常时保留原内容，并标记“【引用编号待核对】”。
+- 不生成“参考文献”“References”章节或编号式文献清单。
 
-【表格整合】
-- 已有表格属于章节正文的一部分，原则上不新增或扩展，仅进行保留、删除、位置调整和格式校正，并按全文出现顺序连续编号。
-- 表格更适合横向比较或集中归纳时保留表格，正文保留综合判断、差异解释、争议、适用范围、证据局限和临床意义。
-- 数据行少于3行、关键字段普遍缺失或与其他表格高度重复且无额外组织价值时删除表格并保留正文。
-- 去重不得删除独立事实、限定条件、必要引用或逻辑衔接。
+【配图判定】
+- 只使用正文和表格已有的事实、关系、数值、单位和引用。每张图及其节点、关系或数据系列均须记录来源；paragraph_ids 使用【正文段落索引】中的 sourceParagraphId，citation_numbers 使用【正文文献】中的 referenceNumber。
+- flowchart：适用于以下可表达为节点和关系的内容：至少4个有序步骤（process）；明确条件及分支（decision）；至少3个节点和2条有依据的机制或信号关系（mechanism）；评估、检查、诊断、治疗、复评或随访路径（clinical_pathway）；至少3个时间点及对应事件（timeline）。仅有背景、定义、单一结论、无结构的并列清单、解剖/影像/病理图片或复杂三维结构时不生成。
+- relation.type 按正文关系选择：步骤或时间顺序用 next，条件分支用 decision，明确因果或作用方向用 causal，反馈用 feedback，相关或结构归属用 association，假设或证据不足用 uncertain。association 不表示方向；uncertain 保留不确定性；正文未明确的方向、顺序或因果不补充。
+- data_chart：组间同指标至少2个可比数值用 bar；同一指标至少3个连续时间点用 line；两项连续变量具有多组配对数值用 scatter；多项研究具有效应值和置信区间用 forest。仅提取已有数值，不估算、插值、平均或换算。缺少单位、分组、人群、时间、来源或统计口径不可比时不生成，并在 not_suitable_reasons 中简述原因。
+- flowchart 设置 flowchart_spec.enabled=true、data_chart_spec.enabled=false；data_chart 反之，且 nodes、relations 返回空数组。figures 非空时 status=ready，否则 status=none。title 不含图号；purpose 说明阅读价值；来源字段仅供系统定位和追溯。不输出风险提示或待核对项。
 
-【输出前检查】
-1. 每个输出引用编号均存在于正文文献 referenceNumber 中。
-2. 不出现输入正文和表格原本不存在的引用编号。
-3. 编号、组合、区间、顺序及观点绑定关系均未改变。
-4. 不存在参考文献列表或“参考文献”“References”章节。
-
-【输出】
-仅输出一个合法 JSON 对象，不输出解释、前后缀或代码块。JSON 只允许包含 merged_manuscript 字段，其值为完整综述初稿 Markdown；题名使用一级标题，章节使用二级标题，章节内小标题使用三级标题。
+【输出要求】
+- 仅输出一个可被标准 JSON 解析器直接解析的对象，不输出解释、代码块或额外字段。字符串中的换行、双引号和反斜杠须正确转义。
+- merged_manuscript 使用 Markdown：题名为“#”，章节名为“##”，章节内小标题为“###”，表格使用标准 Markdown。
+- JSON 只包含以下结构：
 {
-  "merged_manuscript": ""
+  "merged_manuscript": "",
+  "figure_plan": {
+    "status": "ready",
+    "figures": [
+      {
+        "figure_id": "figure-1",
+        "figure_type": "flowchart",
+        "subtype": "process|decision|mechanism|timeline|clinical_pathway|bar|line|scatter|forest",
+        "title": "",
+        "purpose": "",
+        "confidence": 0,
+        "source_scope": {
+          "chapter_ids": [],
+          "paragraph_ids": [],
+          "citation_numbers": []
+        },
+        "flowchart_spec": {
+          "enabled": true,
+          "nodes": [
+            {
+              "id": "node-1",
+              "label": "",
+              "kind": "input|process|decision|outcome",
+              "source_paragraph_ids": [],
+              "citation_numbers": []
+            }
+          ],
+          "relations": [
+            {
+              "from": "node-1",
+              "to": "node-2",
+              "type": "next|decision|causal|association|feedback|uncertain",
+              "label": "",
+              "source_paragraph_ids": [],
+              "citation_numbers": []
+            }
+          ]
+        },
+        "data_chart_spec": {
+          "enabled": false,
+          "chart_type": "",
+          "x_axis": {},
+          "y_axis": {},
+          "series": [
+            {
+              "name": "",
+              "values": [],
+              "source_paragraph_ids": [],
+              "citation_numbers": []
+            }
+          ],
+          "error_bars": [],
+          "notes": []
+        }
+      }
+    ],
+    "not_suitable_reasons": []
+  }
 }`,
 
   preflight: `你是一名医学综述投稿前质控编辑，按照医学综述投稿正文的学术标准，对稿件进行系统性实质审查。重点判断是否存在影响医学准确性、论证成立、证据可靠性、文献综合或结论可信度的问题，并将问题转化为可定位、可执行的修改任务。
@@ -189,7 +253,33 @@ export const DEFAULT_REVIEW_PROMPTS = {
 
 export function loadReviewPromptTemplates() {
   try {
-    const saved = JSON.parse(localStorage.getItem(REVIEW_PROMPT_STORAGE_KEY) || "null");
+    let saved = JSON.parse(localStorage.getItem(REVIEW_PROMPT_STORAGE_KEY) || "null");
+    if (!saved) {
+      const legacyKey = LEGACY_REVIEW_PROMPT_STORAGE_KEYS.find((key) => localStorage.getItem(key));
+      const legacy = legacyKey ? JSON.parse(localStorage.getItem(legacyKey) || "null") : null;
+      if (legacy && typeof legacy === "object") {
+        localStorage.setItem(`${legacyKey}-legacy`, JSON.stringify(legacy));
+        const legacyMerge = typeof legacy.merge === "string" ? legacy.merge : "";
+        saved = {
+          ...legacy,
+          legacyMergePrompt: legacyMerge,
+          merge: DEFAULT_REVIEW_PROMPTS.merge,
+        };
+        localStorage.setItem(REVIEW_PROMPT_STORAGE_KEY, JSON.stringify(saved));
+      }
+    }
+    if (saved && typeof saved === "object") {
+      const savedMerge = typeof saved.merge === "string" ? saved.merge : "";
+      const isCurrentMerge = savedMerge.includes("【执行步骤】")
+        && savedMerge.includes("【配图判定】")
+        && savedMerge.includes("source_paragraph_ids")
+        && savedMerge.includes("status=none")
+        && !savedMerge.includes("figure_policy_json");
+      if (!isCurrentMerge) {
+        saved = { ...saved, legacyMergePrompt: savedMerge, merge: DEFAULT_REVIEW_PROMPTS.merge };
+        localStorage.setItem(REVIEW_PROMPT_STORAGE_KEY, JSON.stringify(saved));
+      }
+    }
     return Object.fromEntries(Object.keys(REVIEW_PROMPT_DEFINITIONS).map((key) => [
       key,
       typeof saved?.[key] === "string" && saved[key].trim() ? saved[key] : DEFAULT_REVIEW_PROMPTS[key],
